@@ -1,0 +1,1 @@
+C:\Users\gizem>docker volume create pgdata && docker run --name postgres-db -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=Gizem191903 -e POSTGRES_DB=mydb -p 5432:5432 -v pgdata:/var/lib/postgresql/data -d postgres:15
