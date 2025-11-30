@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { registerUser } from '../services/api';
 
-// Maskot resmi (Register için farklı bir poz varsa onu koyabilirsin)
+// Maskot resmi
 import registerMascot from '../assets/maskot-hedef.png'; 
 
 function RegisterPage() {
@@ -20,7 +20,10 @@ function RegisterPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // ... (Senin options dizilerin buraya gelecek: goalOptions, activityOptions) ...
+  // Butonun hedef rengini tanımlayalım: Koyu Yeşil (6FCF97)
+  const BUTTON_COLOR = '#6FCF97'; 
+  const HOVER_COLOR = '#5dbb85'; 
+
   const goalOptions = [
     { value: 'lose_weight', label: 'Kilo Vermek' },
     { value: 'gain_weight', label: 'Kilo Almak' },
@@ -58,7 +61,16 @@ function RegisterPage() {
   const handleFinalSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
+    
     try {
+      // Validasyon
+      if (!profileData.age || !profileData.weight || !profileData.height) {
+        setError('Lütfen tüm fiziksel bilgileri doldurun.');
+        setLoading(false);
+        return;
+      }
+      
       const finalPayload = {
         ...basicData,
         ...profileData,
@@ -66,15 +78,51 @@ function RegisterPage() {
         weight: parseFloat(profileData.weight),
         height: parseFloat(profileData.height)
       };
-      const response = await registerUser(finalPayload);
-      if (response.tokens?.access) localStorage.setItem('userToken', response.tokens.access);
-      else if (response.access) localStorage.setItem('userToken', response.access);
       
-      // Başarılı olursa login'e veya dashboard'a
+      // Boş değerleri temizle
+      if (!finalPayload.weight || isNaN(finalPayload.weight)) delete finalPayload.weight;
+      if (!finalPayload.height || isNaN(finalPayload.height)) delete finalPayload.height;
+      
+      const response = await registerUser(finalPayload);
+      
+      // Token'ı kaydet
+      if (response.tokens?.access) {
+        localStorage.setItem('userToken', response.tokens.access);
+      } else if (response.access) {
+        localStorage.setItem('userToken', response.access);
+      }
+      
+      // Başarılı olursa dashboard'a yönlendir
       navigate('/dashboard'); 
     } catch (error) {
-       console.error(error);
-       setError('Kayıt başarısız. Lütfen bilgileri kontrol et.');
+       console.error('Kayıt hatası:', error);
+       
+       // Detaylı hata mesajı göster
+       let errorMessage = 'Kayıt başarısız. Lütfen bilgileri kontrol edin.';
+       
+       if (error.response?.data) {
+         const errorData = error.response.data;
+         
+         // Django REST Framework hata formatı
+         if (errorData.detail) {
+           errorMessage = errorData.detail;
+         } else if (typeof errorData === 'object') {
+           // Field hatalarını birleştir
+           const fieldErrors = Object.entries(errorData)
+             .map(([field, errors]) => {
+               const errorList = Array.isArray(errors) ? errors : [errors];
+               return `${field}: ${errorList.join(', ')}`;
+             })
+             .join('\n');
+           errorMessage = fieldErrors || errorMessage;
+         } else if (typeof errorData === 'string') {
+           errorMessage = errorData;
+         }
+       } else if (error.message) {
+         errorMessage = error.message;
+       }
+       
+       setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -91,7 +139,7 @@ function RegisterPage() {
 
       <div className="relative w-full max-w-2xl">
         
-        {/* --- DEKORATİF ARKA KATMAN (Senin isteğin) --- */}
+        {/* --- DEKORATİF ARKA KATMAN --- */}
         <div className="absolute top-4 left-4 w-full h-full bg-[#A8D5BA] rounded-[2.5rem] -z-10 opacity-40 transform rotate-1"></div>
 
         {/* --- ANA KART --- */}
@@ -106,8 +154,8 @@ function RegisterPage() {
             
             {/* Step Indicator (Modern Hap Tasarım) */}
             <div className="flex justify-center mt-6 gap-2">
-                <div className={`h-2 rounded-full transition-all duration-500 ${step === 1 ? 'w-12 bg-[#A8D5BA]' : 'w-4 bg-gray-200'}`}></div>
-                <div className={`h-2 rounded-full transition-all duration-500 ${step === 2 ? 'w-12 bg-[#A8D5BA]' : 'w-4 bg-gray-200'}`}></div>
+              <div className={`h-2 rounded-full transition-all duration-500 ${step === 1 ? 'w-12 bg-[#A8D5BA]' : 'w-4 bg-gray-200'}`}></div>
+              <div className={`h-2 rounded-full transition-all duration-500 ${step === 2 ? 'w-12 bg-[#A8D5BA]' : 'w-4 bg-gray-200'}`}></div>
             </div>
           </div>
 
@@ -120,38 +168,43 @@ function RegisterPage() {
           {step === 1 && (
             <form onSubmit={handleBasicSubmit} className="space-y-4 animate-fade-in">
               <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 ml-1">Ad</label>
-                    <input name="first_name" required value={basicData.first_name} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="Adın" />
-                 </div>
-                 <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 ml-1">Soyad</label>
-                    <input name="last_name" required value={basicData.last_name} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="Soyadın" />
-                 </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 ml-1">Ad</label>
+                  <input name="first_name" required value={basicData.first_name} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="Adın" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 ml-1">Soyad</label>
+                  <input name="last_name" required value={basicData.last_name} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="Soyadın" />
+                </div>
               </div>
               
               <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">Kullanıcı Adı</label>
-                 <input name="username" required value={basicData.username} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="Kullanıcı adı seç" />
+                <label className="text-xs font-bold text-gray-500 ml-1">Kullanıcı Adı</label>
+                <input name="username" required value={basicData.username} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="Kullanıcı adı seç" />
               </div>
 
               <div className="space-y-1">
-                 <label className="text-xs font-bold text-gray-500 ml-1">E-posta</label>
-                 <input name="email" type="email" required value={basicData.email} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="E-posta adresin" />
+                <label className="text-xs font-bold text-gray-500 ml-1">E-posta</label>
+                <input name="email" type="email" required value={basicData.email} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="E-posta adresin" />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 ml-1">Şifre</label>
-                    <input name="password" type="password" required value={basicData.password} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="******" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 ml-1">Şifre Tekrar</label>
-                    <input name="password_confirm" type="password" required value={basicData.password_confirm} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="******" />
-                  </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 ml-1">Şifre</label>
+                  <input name="password" type="password" required value={basicData.password} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="******" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 ml-1">Şifre Tekrar</label>
+                  <input name="password_confirm" type="password" required value={basicData.password_confirm} onChange={handleBasicChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-[#A8D5BA] outline-none transition-all" placeholder="******" />
+                </div>
               </div>
 
-              <button type="submit" className="w-full py-4 bg-[#A8D5BA] hover:bg-[#96C9AD] text-white font-bold rounded-xl shadow-md transition-all mt-2">
+              {/* --- 1. ADIM BUTONU (YENİ STİL) --- */}
+              <button 
+                type="submit" 
+                style={{ backgroundColor: BUTTON_COLOR }}
+                className="w-full py-4 text-white font-bold text-xl rounded-xl shadow-xl shadow-[#6FCF97]/50 transition-all transform hover:scale-[1.01] active:scale-[0.98] mt-4"
+              >
                 Devam Et →
               </button>
               
@@ -163,43 +216,51 @@ function RegisterPage() {
 
           {step === 2 && (
             <form onSubmit={handleFinalSubmit} className="space-y-4 animate-fade-in">
-               <div className="grid grid-cols-3 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 ml-1">Yaş</label>
-                    <input name="age" type="number" required value={profileData.age} onChange={handleProfileChange} className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none" placeholder="25" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 ml-1">Boy (cm)</label>
-                    <input name="height" type="number" required value={profileData.height} onChange={handleProfileChange} className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none" placeholder="170" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-xs font-bold text-gray-500 ml-1">Kilo (kg)</label>
-                    <input name="weight" type="number" required value={profileData.weight} onChange={handleProfileChange} className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none" placeholder="65" />
-                  </div>
-               </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 ml-1">Yaş</label>
+                  <input name="age" type="number" required value={profileData.age} onChange={handleProfileChange} className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none" placeholder="25" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 ml-1">Boy (cm)</label>
+                  <input name="height" type="number" required value={profileData.height} onChange={handleProfileChange} className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none" placeholder="170" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-gray-500 ml-1">Kilo (kg)</label>
+                  <input name="weight" type="number" required value={profileData.weight} onChange={handleProfileChange} className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none" placeholder="65" />
+                </div>
+              </div>
 
-               <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-500 ml-1">Hedefin</label>
-                  <select name="goal" value={profileData.goal} onChange={handleProfileChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none">
-                     {goalOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-               </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-500 ml-1">Hedefin</label>
+                <select name="goal" value={profileData.goal} onChange={handleProfileChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none">
+                    {goalOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
 
-               <div className="space-y-1">
-                  <label className="text-xs font-bold text-gray-500 ml-1">Hareket Durumu</label>
-                  <select name="activity_level" value={profileData.activity_level} onChange={handleProfileChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none">
-                     {activityOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-               </div>
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-gray-500 ml-1">Hareket Durumu</label>
+                <select name="activity_level" value={profileData.activity_level} onChange={handleProfileChange} className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#A8D5BA] outline-none">
+                    {activityOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
 
-               <div className="flex gap-3 mt-4">
-                 <button type="button" onClick={() => setStep(1)} className="flex-1 py-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl transition-all">
+              <div className="flex gap-3 mt-4">
+                {/* Geri Butonu (Hafif Stil) */}
+                <button type="button" onClick={() => setStep(1)} className="flex-1 py-4 bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold rounded-xl transition-all shadow-md">
                    ← Geri
-                 </button>
-                 <button type="submit" disabled={loading} className="flex-[2] py-4 bg-[#A8D5BA] hover:bg-[#96C9AD] text-white font-bold rounded-xl shadow-lg transition-all">
-                   {loading ? '...' : 'Kaydı Tamamla ✨'}
-                 </button>
-               </div>
+                </button>
+                
+                {/* --- KAYDI TAMAMLA BUTONU (YENİ STİL) --- */}
+                <button 
+                  type="submit" 
+                  disabled={loading} 
+                  style={{ backgroundColor: BUTTON_COLOR }}
+                  className="flex-[2] py-4 text-white font-bold text-xl rounded-xl shadow-xl shadow-[#6FCF97]/50 transition-all transform hover:scale-[1.01] active:scale-[0.98]"
+                >
+                  {loading ? '...' : 'Kaydı Tamamla ✨'}
+                </button>
+              </div>
             </form>
           )}
 

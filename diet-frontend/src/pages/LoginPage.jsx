@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'; // 1. useEffect'i buraya ekledik
+import React, { useState, useEffect } from 'react'; 
 import { Link, useNavigate } from 'react-router-dom';
 import { loginUser } from '../services/api';
 
@@ -14,17 +14,12 @@ function LoginPage() {
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  // --- 🆕 YENİ EKLENEN KISIM: OTOMATİK YÖNLENDİRME ---
-  useEffect(() => {
-    // 1. Dedektif iş başında: LocalStorage'a bak
-    const token = localStorage.getItem('userToken');
+  // Butonun hedef rengini tanımlayalım: Koyu Yeşil
+  const BUTTON_COLOR = '#6FCF97'; 
+  const HOVER_COLOR = '#5dbb85'; // Hafif koyusu
 
-    // 2. Eğer token varsa, bu kullanıcı zaten içeridedir.
-    if (token) {
-      // 3. Hiç bekleme yapma, direkt Dashboard'a gönder
-      navigate('/dashboard');
-    }
-  }, [navigate]); // Bu kod sadece sayfa ilk yüklendiğinde 1 kere çalışır
+  // --- 🆕 YENİ EKLENEN KISIM: OTOMATİK YÖNLENDİRME ---
+  
   // ----------------------------------------------------
 
   const handleChange = (e) => {
@@ -39,7 +34,6 @@ function LoginPage() {
 
     try {
       // api.js'deki loginUser fonksiyonunu çağırıyoruz
-      // Not: api.js'de "await" olduğu için burada cevap gelene kadar bekler (Loading döner)
       const response = await loginUser(formData);
       
       let accessToken = null;
@@ -49,13 +43,13 @@ function LoginPage() {
           accessToken = response;
       }
       else if (response.data && typeof response.data === 'string') {
-          accessToken = response.data;
+        accessToken = response.data;
       }
       else {
-          accessToken = response.data?.tokens?.access || 
-                        response.tokens?.access || 
-                        response.access || 
-                        response.token;
+        accessToken = response.data?.tokens?.access || 
+                       response.tokens?.access || 
+                       response.access || 
+                       response.token;
       }
 
       if (accessToken) {
@@ -138,11 +132,14 @@ function LoginPage() {
               />
             </div>
 
-            {/* Buton */}
+            {/* Buton - ÖĞÜNÜ KAYDET STİLİNE UYARLANDI */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-4 bg-[#A8D5BA] hover:bg-[#96C9AD] text-white font-bold rounded-xl shadow-lg shadow-green-100 hover:shadow-xl hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 flex items-center justify-center gap-2 mt-4"
+              style={{ backgroundColor: BUTTON_COLOR }}
+              className={`w-full py-4 text-white font-bold text-xl rounded-xl shadow-xl shadow-[#6FCF97]/50 transition-all duration-300 flex items-center justify-center gap-2 mt-4 
+                ${loading ? 'bg-gray-400 cursor-not-allowed' : `hover:bg-[${HOVER_COLOR}] hover:scale-[1.01] active:scale-[0.98]`}
+              `}
             >
               {loading ? <span className="animate-spin">⌛</span> : 'Giriş Yap'}
             </button>

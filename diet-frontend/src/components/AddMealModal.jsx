@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-const AddMealModal = ({ isOpen, onClose, onMealAdded }) => {
+const AddMealModal = ({ isOpen, onClose, onMealAdded, defaultMealTime }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -8,6 +8,39 @@ const AddMealModal = ({ isOpen, onClose, onMealAdded }) => {
   const [quantity, setQuantity] = useState(1);
   const [mealTime, setMealTime] = useState('lunch');
   const [message, setMessage] = useState('');
+
+  // defaultMealTime prop'u değiştiğinde mealTime'ı güncelle
+  useEffect(() => {
+    if (defaultMealTime) {
+      setMealTime(defaultMealTime);
+    }
+  }, [defaultMealTime]);
+
+  // Modal açıldığında state'leri sıfırla
+  useEffect(() => {
+    if (isOpen) {
+      setSearchTerm('');
+      setSearchResults([]);
+      setSelectedFood(null);
+      setQuantity(1);
+      setMessage('');
+      // defaultMealTime varsa onu kullan, yoksa saat bazlı belirle
+      if (defaultMealTime) {
+        setMealTime(defaultMealTime);
+      } else {
+        setMealTime(getMealTimeByHour());
+      }
+    }
+  }, [isOpen, defaultMealTime]);
+
+  // Saat bazlı öğün seçimi (AI için kullanılabilir)
+  const getMealTimeByHour = () => {
+    const hour = new Date().getHours();
+    if (hour >= 6 && hour < 11) return 'breakfast';
+    if (hour >= 11 && hour < 15) return 'lunch';
+    if (hour >= 15 && hour < 20) return 'dinner';
+    return 'snack';
+  };
 
   // Backend yapısına uygun URL
   const API_BASE_URL = 'http://localhost:8000/api/auth';

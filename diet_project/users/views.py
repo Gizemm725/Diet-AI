@@ -17,6 +17,10 @@ from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
 from django.db.models import Q, Sum, F
 
+import base64
+from django.core.files.uploadedfile import InMemoryUploadedFile
+from django.views.decorators.csrf import csrf_exempt
+
 # Model ve Serializer Importları
 from .models import (
     UserProfile, Food, DailyIntake, Meal, CustomPlan, 
@@ -205,6 +209,12 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         )
         return profile
     
+    def get(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        # Serializer zaten to_representation ile user bilgilerini ekliyor
+        return Response(serializer.data)
+    
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', True)
         instance = self.get_object()
@@ -213,6 +223,7 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
         self.perform_update(serializer)
         if getattr(instance, '_prefetched_object_cache', None):
             instance._prefetched_object_cache = {}
+        # Güncellenmiş veriyi döndür (serializer zaten user bilgilerini ekliyor)
         return Response(serializer.data)
 
 
@@ -264,6 +275,7 @@ class DailyIntakeDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class MealListView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
+    
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return MealCreateSerializer
@@ -409,24 +421,29 @@ def ai_chat(request):
     except Exception:
         pass
     rag_context = rag_build_ctx(rag_items, limit_chars=800)
-
     system_prompt = (
         "Sen samimi, bilgili ve motive edici bir diyetisyensin (Prona AI). "
         "Kullanıcıyla konuşurken emojiler kullan ve kısa cevaplar ver.\n\n"
         f"Kullanıcı Özeti: {user_profile.age} yaş, Hedef: {user_profile.get_goal_display()}, "
         f"Günlük Limit: {user_profile.daily_calorie_need} kcal.\n\n"
         "ÖNEMLİ GÖREV: Eğer kullanıcı bir şey yediğini söylerse:\n"
-        "1. O yemeğin tahmini kalorisini ve makrolarını hesapla.\n"
-        "2. JSON formatında veriyi döndür (SADECE RAKAM KULLAN).\n"
+        "1. Yenen yiyecekleri ayır ve her birini ayrı ayrı analiz et.\n"
+        "2. Tahmini kalorilerini ve makrolarını hesapla.\n"
+        "3. Veriyi MUTLAKA bir JSON LİSTESİ [...] formatında döndür.\n"
         "---DATA_START---"
-        "{"
-        '  "food_name": "Yemeğin Adı", '
-        '  "calories": 120.5, '
-        '  "protein": 10, '
-        '  "carbs": 15, '
-        '  "fat": 5 '
-        "}"
+        "["
+        "  {"
+        '    "food_name": "Yemeğin Adı", '
+        '    "calories": 120.5, '
+        '    "protein": 10, '
+        '    "carbs": 15, '
+        '    "fat": 5, '
+        '    "meal_time": "snack" '
+        "  }"
+        "]"
         "---DATA_END---"
+        "\nNot: Tek bir yemek bile olsa köşeli parantez [...] içinde liste olarak gönder. "
+        "meal_time alanı için saati tahmin et: 'breakfast', 'lunch', 'dinner' veya 'snack' yaz."
     )
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -544,33 +561,24 @@ class CustomPlanFoodDetailView(generics.RetrieveUpdateDestroyAPIView):
         return CustomPlanFood.objects.filter(custom_plan__id=plan_id, custom_plan__user=self.request.user.profile)
 
 # --- AI MEAL CREATION (CRITICAL FIX) ---
+from django.db.models import Sum, F
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework import permissions, status
+from rest_framework.response import Response
+from datetime import date, datetime
+from .models import DailyIntake, Food, Meal  # Modellerinin yeri farklıysa burayı düzelt
+# clean_number fonksiyonunun import edildiğini veya tanımlı olduğunu varsayıyorum
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def create_meal_from_ai(request):
     """
-    AI'dan gelen öneriyi veritabanına kaydeder.
-    Models.py ile %100 uyumludur.
+    AI'dan gelen hem tekli hem çoklu yemek verisini işler.
     """
     try:
         user_profile = request.user.profile
         
-        # 1. Veriyi al ve temizle
-        raw_food_name = request.data.get('food_name', '').strip()
-        if not raw_food_name:
-            return Response({'error': 'Yemek ismi gerekli'}, status=status.HTTP_400_BAD_REQUEST)
-
-        food_name = raw_food_name.title()[:99]
-        
-        # clean_number fonksiyonu en üstte tanımlı
-        calories = clean_number(request.data.get('calories'))
-        protein = clean_number(request.data.get('protein'))
-        carbs = clean_number(request.data.get('carbs'))
-        fat = clean_number(request.data.get('fat'))
-        quantity = clean_number(request.data.get('quantity'))
-        
-        if quantity <= 0: quantity = 1.0
-        
+        # 1. Ortak Bilgileri Al
         meal_time = request.data.get('meal_time', 'snack')
         date_param = request.data.get('date', date.today())
 
@@ -582,49 +590,66 @@ def create_meal_from_ai(request):
         except ValueError:
             date_obj = date.today()
 
-        # 2. Yemek (Food) Oluştur veya Getir
-        food, created_food = Food.objects.get_or_create(
-            name__iexact=food_name,
-            defaults={
-                'name': food_name,
-                'calories': calories,
-                'protein': protein,
-                'carbs': carbs,  # Modelde 'carbs'
-                'fat': fat,      # Modelde 'fat'
-                'category': 'snack'
-            }
-        )
-        
-        # Eğer yemek varsa ama içi boşsa (0 kalori), güncelle
-        if not created_food and food.calories == 0 and calories > 0:
-            food.calories = calories
-            food.protein = protein
-            food.carbs = carbs
-            food.fat = fat
-            food.save()
-
-        # 3. DailyIntake (Günlük Takip)
+        # 2. Günlük Raporu (DailyIntake) Hazırla
         daily_intake, _ = DailyIntake.objects.get_or_create(
             user=user_profile,
             date=date_obj,
             defaults={'total_calories': 0}
         )
 
-        # 4. Meal (Öğün)
-        meal = Meal.objects.create(
-            daily_intake=daily_intake,
-            food=food,
-            quantity=quantity,
-            meal_time=meal_time,
-            notes='AI Chat Önerisi'
-        )
+        # --- KRİTİK DÜZELTME BAŞLANGICI ---
+        # Önce 'foods' listesi var mı diye bakıyoruz
+        yemek_listesi = request.data.get('foods', [])
 
-        # 5. Günlük Toplamları Hesapla (Veritabanında Aggregation)
+        # Eğer liste boşsa AMA tek bir yemek ismi geldiyse, onu listeye çeviriyoruz
+        if not yemek_listesi and request.data.get('food_name'):
+            yemek_listesi = [request.data]
+        # --- KRİTİK DÜZELTME BİTİŞİ ---
+
+        # 3. Döngü (Artık her türlü çalışır)
+        for yemek in yemek_listesi:
+            isim = yemek.get('food_name', '').strip().title()[:99]
+            if not isim: continue 
+
+            calories = clean_number(yemek.get('calories'))
+            protein = clean_number(yemek.get('protein'))
+            carbs = clean_number(yemek.get('carbs'))
+            fat = clean_number(yemek.get('fat'))
+            quantity = clean_number(yemek.get('quantity'))
+            
+            if quantity <= 0: quantity = 1.0
+
+            food, created_food = Food.objects.get_or_create(
+                name__iexact=isim,
+                defaults={
+                    'name': isim,
+                    'calories': calories,
+                    'protein': protein,
+                    'carbs': carbs,
+                    'fat': fat,
+                    'category': 'snack' 
+                }
+            )
+            
+            if not created_food and food.calories == 0 and calories > 0:
+                food.calories = calories
+                food.protein = protein
+                food.carbs = carbs
+                food.fat = fat
+                food.save()
+
+            Meal.objects.create(
+                daily_intake=daily_intake, 
+                food=food,
+                quantity=quantity,
+                meal_time=meal_time, 
+                notes='AI Chat Önerisi'
+            )
+
+        # 4. Toplamları Hesapla
         meals_qs = Meal.objects.filter(daily_intake=daily_intake)
-        
-        # Yardımcı: toplam hesapla
+
         def calc_total(field):
-            # Veritabanında (food.field * quantity) işlemini yap ve topla
             total = meals_qs.annotate(
                 val=F(f'food__{field}') * F('quantity')
             ).aggregate(Sum('val'))['val__sum']
@@ -637,8 +662,7 @@ def create_meal_from_ai(request):
         daily_intake.save()
 
         return Response({
-            'message': f'{food_name} başarıyla eklendi.',
-            'meal_id': meal.id,
+            'message': 'Yemekler başarıyla eklendi.',
             'daily_total': {
                 'calories': daily_intake.total_calories,
                 'protein': daily_intake.total_protein,
@@ -646,6 +670,212 @@ def create_meal_from_ai(request):
                 'fat': daily_intake.total_fat
             }
         }, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Response({'error': f'Sunucu hatası: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def add_meal_to_daily_intake(request):
+    """
+    Manuel olarak seçilen bir yemeği (ID ile) kaydeder.
+    """
+    try:
+        user_profile = request.user.profile
+        
+        # 1. Frontend'den gelen verileri al
+        food_id = request.data.get('food_id')
+        quantity = clean_number(request.data.get('quantity'))
+        meal_time = request.data.get('meal_time', 'snack')
+        date_param = request.data.get('date', date.today())
+
+        if not food_id:
+            return Response({'error': 'Yemek seçilmedi.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Tarih formatını ayarla
+        try:
+            if isinstance(date_param, str):
+                date_obj = datetime.strptime(date_param, '%Y-%m-%d').date()
+            else:
+                date_obj = date_param
+        except ValueError:
+            date_obj = date.today()
+
+        # 2. Seçilen Yemeği Bul
+        try:
+            food = Food.objects.get(id=food_id)
+        except Food.DoesNotExist:
+            return Response({'error': 'Seçilen yemek bulunamadı.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # 3. Günlük Raporu (DailyIntake) Getir veya Oluştur
+        daily_intake, _ = DailyIntake.objects.get_or_create(
+            user=user_profile,
+            date=date_obj,
+            defaults={'total_calories': 0}
+        )
+
+        # 4. Öğünü Kaydet
+        meal = Meal.objects.create(
+            daily_intake=daily_intake,
+            food=food,
+            quantity=quantity,
+            meal_time=meal_time,
+            notes='Manuel Ekleme'
+        )
+
+        # 5. Toplamları Güncelle (Aggregation)
+        meals_qs = Meal.objects.filter(daily_intake=daily_intake)
+
+        def calc_total(field):
+            total = meals_qs.annotate(
+                val=F(f'food__{field}') * F('quantity')
+            ).aggregate(Sum('val'))['val__sum']
+            return float(total) if total else 0.0
+
+        daily_intake.total_calories = calc_total('calories')
+        daily_intake.total_protein = calc_total('protein')
+        daily_intake.total_carbs = calc_total('carbs')
+        daily_intake.total_fat = calc_total('fat')
+        daily_intake.save()
+
+        return Response({'message': 'Öğün başarıyla eklendi.'}, status=status.HTTP_201_CREATED)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def analyze_food_image(request):
+    """
+    Frontend'den gelen besin etiketi resmini OpenRouter Vision modeline gönderir
+    ve etiket üzerindeki besin değerlerini JSON olarak alır.
+    """
+    if 'image' not in request.FILES:
+        return Response({'error': 'Resim yüklenmedi.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    image_file = request.FILES['image']
+    
+    # 1. Resmi Base64 formatına çevir
+    try:
+        base64_image = base64.b64encode(image_file.read()).decode('utf-8')
+    except Exception as e:
+        return Response({'error': f'Resim işlenemedi: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # 2. OpenRouter İsteği Hazırla
+    if not OPENROUTER_KEY:
+        return Response({'error': 'API anahtarı eksik.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://diyetuygulamasi.com", 
+    }
+
+    # Model alternatifleri: google/gemini-flash-1.5, openai/gpt-4o-mini, google/gemini-pro-vision
+    model_name = OPENROUTER_MODEL if OPENROUTER_MODEL else "google/gemini-flash-1.5"
+    
+    payload = {
+        "model": model_name,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text", 
+                        "text": (
+                            "Bu resimde bir besin etiketi var. Etiket üzerindeki besin değerlerini oku ve çıkar. "
+                            "Etiket üzerinde genellikle şunlar yazar: "
+                            "- Besin adı (ör: 'Süt', 'Ekmek', 'Yoğurt') "
+                            "- 100 gram veya 100ml için besin değerleri: "
+                            "  * Enerji/Kalori (kcal veya kJ) "
+                            "  * Protein (g) "
+                            "  * Karbonhidrat (g) "
+                            "  * Yağ (g) "
+                            "- Porsiyon bilgisi (ör: 1 porsiyon = 200g) "
+                            "\n"
+                            "Etiket üzerindeki TÜM metinleri oku ve aşağıdaki JSON formatında yanıt ver: "
+                            "{\"food_name\": \"etiket üzerindeki besin adı\", "
+                            "\"calories\": 100 gram için kalori değeri (sadece sayı), "
+                            "\"protein\": 100 gram için protein değeri (sadece sayı, gram cinsinden), "
+                            "\"carbs\": 100 gram için karbonhidrat değeri (sadece sayı, gram cinsinden), "
+                            "\"fat\": 100 gram için yağ değeri (sadece sayı, gram cinsinden), "
+                            "\"serving_size\": \"porsiyon bilgisi varsa (ör: 200g veya 250ml), yoksa null\"} "
+                            "\n"
+                            "ÖNEMLİ: "
+                            "- Sadece etiket üzerinde yazan değerleri kullan, tahmin yapma. "
+                            "- Eğer bir değer etikette yoksa 0 yaz. "
+                            "- Kalori değeri kJ cinsindeyse, kcal'e çevir (1 kcal = 4.184 kJ). "
+                            "- Sadece JSON döndür, başka açıklama yapma. "
+                            "- JSON formatında döndür, markdown kullanma."
+                        )
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 500,
+        "temperature": 0.1  # Düşük temperature = daha tutarlı sonuçlar
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            ai_content = response.json()['choices'][0]['message']['content']
+            
+            # Markdown temizliği (```json ... ``` kısımlarını siler)
+            cleaned_json = ai_content.replace("```json", "").replace("```", "").strip()
+            
+            # Eğer başında/tırında tırnak işareti varsa temizle
+            if cleaned_json.startswith('"'):
+                cleaned_json = cleaned_json[1:]
+            if cleaned_json.endswith('"'):
+                cleaned_json = cleaned_json[:-1]
+            cleaned_json = cleaned_json.strip()
+            
+            import json
+            try:
+                data = json.loads(cleaned_json)
+                
+                # Veri doğrulama ve temizleme
+                if not isinstance(data, dict):
+                    return Response({'error': 'Geçersiz veri formatı.'}, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Sayısal değerleri kontrol et ve temizle
+                result = {
+                    'food_name': data.get('food_name', 'Bilinmeyen Besin'),
+                    'calories': float(data.get('calories', 0)) if data.get('calories') else 0,
+                    'protein': float(data.get('protein', 0)) if data.get('protein') else 0,
+                    'carbs': float(data.get('carbs', 0)) if data.get('carbs') else 0,
+                    'fat': float(data.get('fat', 0)) if data.get('fat') else 0,
+                }
+                
+                return Response({'status': 'success', 'data': result}, status=status.HTTP_200_OK)
+            except json.JSONDecodeError as e:
+                return Response({
+                    'error': f'JSON parse hatası: {str(e)}. AI yanıtı: {cleaned_json[:200]}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            error_text = response.text
+            try:
+                error_json = response.json()
+                error_text = str(error_json)
+            except:
+                pass
+            return Response({'error': f'AI Hatası: {error_text}'}, status=status.HTTP_502_BAD_GATEWAY)
 
     except Exception as e:
         import traceback

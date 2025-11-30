@@ -1,3 +1,4 @@
+
 from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
@@ -6,6 +7,7 @@ from .views import (
     UserLoginView,
     UserLogoutView,
     UserProfileView,
+    analyze_food_image,
     user_info,
     change_password,
     create_meal_from_ai,
@@ -29,6 +31,7 @@ from .views import (
     dashboard_stats,
     weekly_report,
     add_meal_to_daily_intake
+   
 )
 
 urlpatterns = [
@@ -78,4 +81,5 @@ urlpatterns = [
     # ScannedFood endpoints
     path('scanned-foods/', ScannedFoodListView.as_view(), name='scanned_food_list'),
     path('scanned-foods/<int:pk>/', ScannedFoodDetailView.as_view(), name='scanned_food_detail'),
+    path('analyze-food-image/', analyze_food_image, name='analyze-food-image'),
 ]
